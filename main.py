@@ -55,14 +55,26 @@ async def filter_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not msg:
         return
 
-    # চ্যানেলের মূল পোস্ট কপি হলে তা ডিলিট হবে না
+    # চ্যানেলের মূল পোস্ট অটোমেটিক কপি বা ফরোয়ার্ড হলে তা ডিলিট হবে না
     if msg.is_automatic_forward:
         return
 
     chat_id = update.effective_chat.id
 
-    # কেউ যদি কোনো চ্যানেলের প্রোফাইল দিয়ে কমেন্ট করে (আইডি গোপন করে)
-    if msg.sender_chat and not msg.from_user:
+    # লিঙ্কড চ্যানেল আইডি বের করা
+    linked_channel_id = None
+    try:
+        chat_info = await context.bot.get_chat(chat_id)
+        linked_channel_id = chat_info.linked_chat_id
+    except Exception:
+        pass
+
+    # অ্যাডমিন যদি অ্যানোনিমাস (গ্রুপের নাম দিয়ে) বা মূল চ্যানেলের প্রোফাইল দিয়ে মেসেজ দেয়
+    if msg.sender_chat:
+        if msg.sender_chat.id == chat_id or (linked_channel_id and msg.sender_chat.id == linked_channel_id):
+            return  # অ্যাডমিন/চ্যানেলের মেসেজ, কোনো কিছু ডিলিট হবে না
+        
+        # বহিরাগত কোনো চ্যানেলের প্রোফাইল দিয়ে কমেন্ট করলে ডিলিট
         try:
             await msg.delete()
         except:
@@ -73,23 +85,28 @@ async def filter_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user:
         return
 
-    # অ্যাডমিন বা ওনারদের মেসেজ ফিল্টার হবে না
+    # ==================== অ্যাডমিন এবং ওনার চেক ====================
+    # ১. গ্রুপ অ্যাডমিন বা ওনার কিনা চেক করা
     try:
-        chat_admin = await context.bot.get_chat_member(chat_id, user.id)
-        if chat_admin.status in ['administrator', 'creator']:
-            return
-    except:
+        chat_member = await context.bot.get_chat_member(chat_id, user.id)
+        if chat_member.status in ['administrator', 'creator']:
+            return  # গ্রুপ অ্যাডমিন/ওনারদের কোনো মেসেজ ডিলিট হবে না
+    except Exception:
         pass
 
-    # --- লিঙ্কড চ্যানেল স্বয়ংক্রিয়ভাবে শনাক্তকরণ ---
-    linked_channel_id = None
-    try:
-        chat_info = await context.bot.get_chat(chat_id)
-        linked_channel_id = chat_info.linked_chat_id
-    except Exception as e:
-        print(f"Linked Chat Error: {e}")
+    # ২. লিঙ্কড চ্যানেল অ্যাডমিন বা ওনার কিনা চেক করা
+    if linked_channel_id:
+        try:
+            channel_member = await context.bot.get_chat_member(linked_channel_id, user.id)
+            if channel_member.status in ['administrator', 'creator']:
+                return  # চ্যানেল অ্যাডমিন/ওনারদের কোনো মেসেজ ডিলিট হবে না
+        except Exception:
+            pass
+    # ===============================================================
 
-    # ১. গ্রুপ ও মূল চ্যানেলে জয়েন আছে কিনা চেক করা
+    # --- সাধারণ মেম্বারদের জন্য ফিল্টারিং শুরু ---
+
+    # ১. গ্রুপ এবং মূল চ্যানেলে জয়েন আছে কিনা চেক করা
     in_group = await is_member(context.bot, chat_id, user.id)
     in_channel = True
 
@@ -109,8 +126,9 @@ async def filter_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         except Exception as e:
             print(f"Delete Error: {e}")
+        return
 
-    # ২. কোনো লিংক শেয়ার করলে সাথে সাথে ডিলিট
+    # ২. সাধারণ ইউজার কোনো লিংক শেয়ার করলে সাথে সাথে ডিলিট
     text = msg.text or msg.caption or ""
     if re.search(LINK_REGEX, text, re.IGNORECASE):
         try:
