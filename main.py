@@ -3,13 +3,15 @@ import re
 import threading
 from flask import Flask
 from telegram import Update
+from telegram.constants import MessageEntityType
 from telegram.ext import Application, MessageHandler, ContextTypes, filters
 
 # ১. বট টোকেন
 TOKEN = os.getenv("BOT_TOKEN", "8781582257:AAFiv9liUbPvFCUkARJNqEKOxFmuBGs-uI8")
 
-# ২. শক্তিশালী লিংক ডিটেকশন রেগুলার এক্সপ্রেশন
+# ২. লিংক এবং @ মেনশন ডিটেকশন রেগুলার এক্সপ্রেশন
 LINK_REGEX = r'(https?://\S+|www\.\S+|t\.me/\S+|telegram\.me/\S+|wa\.me/\S+|\b\w+\.(com|net|org|xyz|io|me|info|site|online|shop|live|app|top|link|bd|in|club|vip)\b)'
+MENTION_REGEX = r'@[a-zA-Z0-9_]+'
 
 # ৩. Render-এ ২৪ ঘণ্টা চালু রাখার জন্য Flask ওয়েব সার্ভার
 server = Flask(__name__)
@@ -90,7 +92,7 @@ async def filter_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         chat_member = await context.bot.get_chat_member(chat_id, user.id)
         if chat_member.status in ['administrator', 'creator']:
-            return  # গ্রুপ অ্যাডমিন/ওনারদের কোনো মেসেজ ডিলিট হবে না
+            return  # অ্যাডমিন/ওনারদের কোনো মেসেজ ডিলিট হবে না
     except Exception:
         pass
 
@@ -123,22 +125,47 @@ async def filter_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"👉 দয়া করে জয়েন হয়ে পুনরায় চেষ্টা করুন।"
             )
             await context.bot.send_message(chat_id=chat_id, text=warning)
-            return
         except Exception as e:
             print(f"Delete Error: {e}")
         return
 
-    # ২. সাধারণ ইউজার কোনো লিংক শেয়ার করলে সাথে সাথে ডিলিট
+    # ২. লিংক অথবা @ দিয়ে মেনশন/ইউজারনেম চেক করা
     text = msg.text or msg.caption or ""
-    if re.search(LINK_REGEX, text, re.IGNORECASE):
+    entities = (msg.entities or ()) + (msg.caption_entities or ())
+
+    has_link = bool(re.search(LINK_REGEX, text, re.IGNORECASE))
+    has_mention = bool(re.search(MENTION_REGEX, text))
+
+    # টেলিগ্রাম এনটিটি দিয়েও নিখুঁতভাবে চেক করা
+    for entity in entities:
+        if entity.type in [MessageEntityType.MENTION, MessageEntityType.TEXT_MENTION]:
+            has_mention = True
+        elif entity.type in [MessageEntityType.URL, MessageEntityType.TEXT_LINK]:
+            has_link = True
+
+    # @ মেনশন বা ইউজারনেম থাকলে ডিলিট
+    if has_mention:
+        try:
+            await msg.delete()
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"🚫 দুঃখিত {user.first_name}! এখানে `@` দিয়ে কাউকে মেনশন বা ইউজারনেম শেয়ার করা সম্পূর্ণ নিষেধ।"
+            )
+            return
+        except Exception as e:
+            print(f"Mention Delete Error: {e}")
+
+    # লিংক থাকলে ডিলিট
+    if has_link:
         try:
             await msg.delete()
             await context.bot.send_message(
                 chat_id=chat_id,
                 text=f"🚫 দুঃখিত {user.first_name}! এখানে যেকোনো ধরণের লিংক শেয়ার করা সম্পূর্ণ নিষেধ।"
             )
+            return
         except Exception as e:
-            print(f"Link Error: {e}")
+            print(f"Link Delete Error: {e}")
 
 def main():
     keep_alive()
