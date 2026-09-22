@@ -1,13 +1,14 @@
 import os
 import re
+import html
 import asyncio
 import threading
 from flask import Flask
 from telegram import Update
-from telegram.constants import MessageEntityType
+from telegram.constants import MessageEntityType, ParseMode
 from telegram.ext import Application, MessageHandler, ContextTypes, filters
 
-# ১. বট টোকেন (Render-এ Environment Variable হিসেবে BOT_TOKEN সেট করুন)
+# ১. বট টোকেন
 TOKEN = os.getenv("BOT_TOKEN", "8781582257:AAFiv9liUbPvFCUkARJNqEKOxFmuBGs-uI8")
 
 # ২. ফিল্টারিং রেগুলার এক্সপ্রেশন (Regex)
@@ -44,20 +45,19 @@ async def is_member(bot, chat_id: int, user_id: int) -> bool:
         print(f"Member check error for chat {chat_id}: {e}")
         return False
 
-# ৫. ডিলিটযোগ্য সতর্কবার্তা পাঠানোর ফাংশন
-async def send_auto_delete_warning(bot, chat_id, thread_id, text, delay=7):
+# ৫. স্থায়ী সতর্কবার্তা পাঠানোর ফাংশন (যা কখনো ডিলিট হবে না)
+async def send_permanent_warning(bot, chat_id, thread_id, text):
     try:
-        sent = await bot.send_message(
+        await bot.send_message(
             chat_id=chat_id,
             message_thread_id=thread_id,
-            text=text
+            text=f"<b>{text}</b>",
+            parse_mode=ParseMode.HTML
         )
-        await asyncio.sleep(delay)
-        await bot.delete_message(chat_id=chat_id, message_id=sent.message_id)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"Warning Send Error: {e}")
 
-# ৬. নতুন মেম্বার জয়েন হলে স্বাগতম মেসেজ
+# ৬. নতুন মেম্বার আসলে স্বাগতম মেসেজ (বোল্ড ও স্থায়ী)
 async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     if not msg or not msg.new_chat_members:
@@ -67,19 +67,22 @@ async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user.id == context.bot.id:
             continue
         try:
-            await msg.reply_text(
-                f"👋 স্বাগতম {user.first_name}!\n🌸 আমাদের পরিবারে আপনাকে স্বাগতম।"
+            safe_name = html.escape(user.first_name)
+            welcome_text = (
+                f"<b>👋 স্বাগতম {safe_name}!</b>\n"
+                f"<b>🌸 আমাদের পরিবারে আপনাকে স্বাগতম।</b>"
             )
+            await msg.reply_text(welcome_text, parse_mode=ParseMode.HTML)
         except Exception as e:
             print(f"Welcome Error: {e}")
 
-# ৭. মেসেজ, কমেন্ট ও ইনবক্স ফিল্টারিং
+# ৭. মেসেজ, কমেন্ট, লিংক ও ইনবক্স ফিল্টারিং
 async def filter_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     if not msg:
         return
 
-    # চ্যানেলের মূল পোস্ট অটো-ফরোয়ার্ড হলে এড়িয়ে যাবে
+    # চ্যানেলের মূল পোস্ট অটো-ফরোয়ার্ড হলে ডিলিট হবে না
     if msg.is_automatic_forward:
         return
 
@@ -97,9 +100,9 @@ async def filter_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # অ্যাডমিন যদি চ্যানেল বা অ্যানোনিমাস প্রোফাইল দিয়ে মেসেজ দেয়
     if msg.sender_chat:
         if msg.sender_chat.id == chat_id or (linked_channel_id and msg.sender_chat.id == linked_channel_id):
-            return  # মূল চ্যানেল/গ্রুপের নিজস্ব পোস্ট
+            return  # মূল চ্যানেলের নিজস্ব মেসেজ
         
-        # বাইরের অন্য চ্যানেল প্রোফাইল দিয়ে মেসেজ করলে ডিলিট
+        # বহিরাগত অন্য চ্যানেলের প্রোফাইল দিয়ে কমেন্ট করলে ডিলিট
         try:
             await msg.delete()
         except Exception:
@@ -129,20 +132,22 @@ async def filter_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
     # ==============================================================
 
+    safe_name = html.escape(user.first_name)
+
     # ==================== সাধারণ মেম্বার চেক ====================
-    # ১. মূল চ্যানেলে জয়েন আছে কি না যাচাই করা
+    # ১. মূল চ্যানেলে জয়েন আছে কি না যাচাই
     if linked_channel_id:
         in_channel = await is_member(context.bot, linked_channel_id, user.id)
         if not in_channel:
             try:
                 await msg.delete()
                 warning = (
-                    f"⚠️ দুঃখিত {user.first_name}!\n\n"
+                    f"⚠️ দুঃখিত {safe_name}!\n\n"
                     f"এখানে কমেন্ট করতে হলে আপনাকে আমাদের মূল চ্যানেলে জয়েন থাকতে হবে।"
                 )
-                asyncio.create_task(send_auto_delete_warning(context.bot, chat_id, thread_id, warning))
+                await send_permanent_warning(context.bot, chat_id, thread_id, warning)
             except Exception as e:
-                print(f"Channel membership delete error: {e}")
+                print(f"Channel membership error: {e}")
             return
 
     # ২. লিংক ও @ মেনশন চেক
@@ -158,22 +163,22 @@ async def filter_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif entity.type in [MessageEntityType.URL, MessageEntityType.TEXT_LINK]:
             has_link = True
 
-    # মেনশন ডিলিট
+    # মেনশন ডিলিট ও বোল্ড ওয়ার্নিং
     if has_mention:
         try:
             await msg.delete()
-            warning = f"🚫 দুঃখিত {user.first_name}! এখানে `@` দিয়ে মেনশন করা নিষেধ।"
-            asyncio.create_task(send_auto_delete_warning(context.bot, chat_id, thread_id, warning))
+            warning = f"🚫 দুঃখিত {safe_name}! এখানে @ দিয়ে কাউকে মেনশন করা সম্পূর্ণ নিষেধ।"
+            await send_permanent_warning(context.bot, chat_id, thread_id, warning)
             return
         except Exception as e:
             print(f"Mention Delete Error: {e}")
 
-    # লিংক ডিলিট
+    # লিংক ডিলিট ও বোল্ড ওয়ার্নিং
     if has_link:
         try:
             await msg.delete()
-            warning = f"🚫 দুঃখিত {user.first_name}! এখানে যেকোনো ধরণের লিংক শেয়ার করা নিষেধ।"
-            asyncio.create_task(send_auto_delete_warning(context.bot, chat_id, thread_id, warning))
+            warning = f"🚫 দুঃখিত {safe_name}! এখানে যেকোনো ধরণের লিংক শেয়ার করা সম্পূর্ণ নিষেধ।"
+            await send_permanent_warning(context.bot, chat_id, thread_id, warning)
             return
         except Exception as e:
             print(f"Link Delete Error: {e}")
@@ -181,13 +186,13 @@ async def filter_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ৩. ইনবক্স সতর্কবার্তা চেক (Inbox / DM / PM / IB / ইনবক্স ইত্যাদি)
     if re.search(INBOX_REGEX, text):
         try:
-            warning_msg = "⚠️ সতর্কতা: Inbox-এ লেনদেন বা কথাবার্তার ক্ষেত্রে সবাই সতর্ক থাকুন। কেউ কাউকে ঠকালে তার দায়ভার গ্রুপ কর্তৃপক্ষ নেবে না। 🚫"
-            await msg.reply_text(warning_msg)
+            inbox_warning = "⚠️ সতর্কতা: Inbox-এ লেনদেন বা কথাবার্তার ক্ষেত্রে সবাই সতর্ক থাকুন। কেউ কাউকে ঠকালে তার দায়ভার গ্রুপ কর্তৃপক্ষ নেবে না। 🚫"
+            await msg.reply_text(f"<b>{inbox_warning}</b>", parse_mode=ParseMode.HTML)
         except Exception as e:
             print(f"Inbox warning error: {e}")
 
 def main():
-    # Flask সার্ভার চালু করা
+    # ২৪/৭ চালু রাখার জন্য ব্যাকগ্রাউন্ড সার্ভার
     keep_alive()
     print("Bot is starting...")
 
