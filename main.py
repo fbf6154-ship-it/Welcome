@@ -7,14 +7,17 @@ from telegram import Update
 from telegram.constants import MessageEntityType
 from telegram.ext import Application, MessageHandler, ContextTypes, filters
 
-# ১. বট টোকেন (Render-এ Environment Variable হিসেবে BOT_TOKEN সেট করতে পারেন)
+# ১. বট টোকেন (Render-এ Environment Variable হিসেবে BOT_TOKEN সেট করুন)
 TOKEN = os.getenv("BOT_TOKEN", "8781582257:AAFiv9liUbPvFCUkARJNqEKOxFmuBGs-uI8")
 
-# ২. লিংক এবং @ মেনশন ডিটেকশন রেগুলার এক্সপ্রেশন
+# ২. ফিল্টারিং রেগুলার এক্সপ্রেশন (Regex)
 LINK_REGEX = r'(https?://\S+|www\.\S+|t\.me/\S+|telegram\.me/\S+|wa\.me/\S+|\b\w+\.(com|net|org|xyz|io|me|info|site|online|shop|live|app|top|link|bd|in|club|vip)\b)'
 MENTION_REGEX = r'@[a-zA-Z0-9_]+'
 
-# ৩. Render-এ চালু রাখার জন্য Flask সার্ভার
+# ইনবক্স, ডিএম, পিএম, আইবি (বাংলা, ইংরেজি ও বাংলিশ প্যাটার্ন)
+INBOX_REGEX = r'(?i)\b(inbox|inboxe|inbx|dm|pm|pvt|privet|private|ib)\b|ইনবক্স|ইনবক্সে|আইবি|আইবিতে|ডিএম|পিএম|পার্সোনাল|পার্সোনালে|মেসেজ\s*(দিন|দেন|করো|করুন)|ইনবক্স\s*(করুন|করো|এ\s*আসুন)'
+
+# ৩. Render-এ ২৪/৭ চালু রাখার জন্য Flask সার্ভার
 server = Flask(__name__)
 
 @server.route('/')
@@ -41,7 +44,7 @@ async def is_member(bot, chat_id: int, user_id: int) -> bool:
         print(f"Member check error for chat {chat_id}: {e}")
         return False
 
-# ৫. ওয়ার্নিং মেসেজ পাঠিয়ে কিছুক্ষণ পর অটো-ডিলিট করার ফাংশন
+# ৫. ডিলিটযোগ্য সতর্কবার্তা পাঠানোর ফাংশন
 async def send_auto_delete_warning(bot, chat_id, thread_id, text, delay=7):
     try:
         sent = await bot.send_message(
@@ -54,7 +57,7 @@ async def send_auto_delete_warning(bot, chat_id, thread_id, text, delay=7):
     except Exception:
         pass
 
-# ৬. নতুন মেম্বার আসলে স্বাগতম মেসেজ
+# ৬. নতুন মেম্বার জয়েন হলে স্বাগতম মেসেজ
 async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     if not msg or not msg.new_chat_members:
@@ -70,13 +73,13 @@ async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             print(f"Welcome Error: {e}")
 
-# ৭. মেসেজ ও কমেন্ট ফিল্টারিং
+# ৭. মেসেজ, কমেন্ট ও ইনবক্স ফিল্টারিং
 async def filter_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     if not msg:
         return
 
-    # চ্যানেলের মূল পোস্ট অটো-ফরোয়ার্ড হলে ডিলিট হবে না
+    # চ্যানেলের মূল পোস্ট অটো-ফরোয়ার্ড হলে এড়িয়ে যাবে
     if msg.is_automatic_forward:
         return
 
@@ -94,9 +97,9 @@ async def filter_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # অ্যাডমিন যদি চ্যানেল বা অ্যানোনিমাস প্রোফাইল দিয়ে মেসেজ দেয়
     if msg.sender_chat:
         if msg.sender_chat.id == chat_id or (linked_channel_id and msg.sender_chat.id == linked_channel_id):
-            return  # মূল চ্যানেলের মেসেজ
+            return  # মূল চ্যানেল/গ্রুপের নিজস্ব পোস্ট
         
-        # বহিরাগত অন্য চ্যানেলের প্রোফাইল দিয়ে কমেন্ট করলে মেসেজ ডিলিট
+        # বাইরের অন্য চ্যানেল প্রোফাইল দিয়ে মেসেজ করলে ডিলিট
         try:
             await msg.delete()
         except Exception:
@@ -175,7 +178,16 @@ async def filter_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             print(f"Link Delete Error: {e}")
 
+    # ৩. ইনবক্স সতর্কবার্তা চেক (Inbox / DM / PM / IB / ইনবক্স ইত্যাদি)
+    if re.search(INBOX_REGEX, text):
+        try:
+            warning_msg = "⚠️ সতর্কতা: Inbox-এ লেনদেন বা কথাবার্তার ক্ষেত্রে সবাই সতর্ক থাকুন। কেউ কাউকে ঠকালে তার দায়ভার গ্রুপ কর্তৃপক্ষ নেবে না। 🚫"
+            await msg.reply_text(warning_msg)
+        except Exception as e:
+            print(f"Inbox warning error: {e}")
+
 def main():
+    # Flask সার্ভার চালু করা
     keep_alive()
     print("Bot is starting...")
 
