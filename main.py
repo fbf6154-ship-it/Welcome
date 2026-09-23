@@ -9,7 +9,7 @@ from telegram.constants import MessageEntityType, ParseMode
 from telegram.ext import Application, MessageHandler, ContextTypes, filters
 
 # ১. বট টোকেন (BotFather থেকে নতুন টোকেন নিয়ে এখানে বসান)
-TOKEN = os.getenv("BOT_TOKEN", "আপনার_নতুন_বট_টোকেন_এখানে_দিন")
+TOKEN = os.getenv("BOT_TOKEN", "8781582257:AAGPNLz6JU6J2h6xt28I07WyuPF2QCilOTw")
 
 # ২. রেগুলার এক্সপ্রেশন (Regex)
 LINK_REGEX = r'(https?://\S+|www\.\S+|t\.me/\S+|telegram\.me/\S+|wa\.me/\S+|\b\w+\.(com|net|org|xyz|io|me|info|site|online|shop|live|app|top|link|bd|in|club|vip)\b)'
